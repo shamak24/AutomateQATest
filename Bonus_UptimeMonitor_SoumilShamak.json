@@ -1,0 +1,358 @@
+{
+  "name": "Uptime Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const url = 'https://demo.realworld.show/';\nconst maxAttempts = 3;\nconst pauseMs = 2000;\n\nlet result = null;\n\nfor (let attempt = 1; attempt <= maxAttempts; attempt++) {\n  const start = Date.now();\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'GET',\n      url,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n      timeout: 20000,\n    });\n\n    const statusCode = Number(res.statusCode ?? 0);\n    const body =\n      typeof res.body === 'string'\n        ? res.body\n        : JSON.stringify(res.body ?? '');\n    const responseTimeMs = Date.now() - start;\n    const looksLikeConduit =\n      body.toLowerCase().includes('conduit') ||\n      body.toLowerCase().includes('realworld');\n\n    result = {\n      url,\n      attempt,\n      maxAttempts,\n      statusCode,\n      responseTimeMs,\n      ok: statusCode === 200 && looksLikeConduit,\n      checkedAt: new Date().toISOString(),\n    };\n\n    if (result.ok) break;\n  } catch (error) {\n    result = {\n      url,\n      attempt,\n      maxAttempts,\n      statusCode: 0,\n      responseTimeMs: Date.now() - start,\n      ok: false,\n      error: error.message || String(error),\n      checkedAt: new Date().toISOString(),\n    };\n  }\n\n  if (attempt < maxAttempts && result && !result.ok) {\n    await new Promise((r) => setTimeout(r, pauseMs));\n  }\n}\n\nif (!result) {\n  result = {\n    url,\n    attempt: maxAttempts,\n    maxAttempts,\n    statusCode: 0,\n    responseTimeMs: 0,\n    ok: false,\n    error: 'No result from health check',\n    checkedAt: new Date().toISOString(),\n  };\n}\n\nconst store = $getWorkflowStaticData('global');\nif (!Array.isArray(store.checks)) store.checks = [];\nstore.checks.push({\n  checkedAt: result.checkedAt,\n  ok: result.ok,\n  statusCode: result.statusCode,\n  responseTimeMs: result.responseTimeMs,\n});\nif (store.checks.length > 500) {\n  store.checks = store.checks.slice(-500);\n}\n\nreturn [\n  {\n    json: {\n      ...result,\n      totalInStore: store.checks.length,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -16
+      ],
+      "id": "c974e4e0-3f91-46a9-8a06-84c5840677d6",
+      "name": "Check site health",
+      "retryOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const check = $input.first().json;\n\nconst store = $getWorkflowStaticData('global');\nif (!Array.isArray(store.checks)) {\n  store.checks = [];\n}\n\nstore.checks.push({\n  checkedAt: check.checkedAt,\n  ok: !!check.ok,\n  statusCode: check.statusCode,\n  responseTimeMs: check.responseTimeMs,\n});\n\nif (store.checks.length > 500) {\n  store.checks = store.checks.slice(-500);\n}\n\nreturn [\n  {\n    json: {\n      ...check,\n      recorded: true,\n      totalInStore: store.checks.length,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        -16
+      ],
+      "id": "cee0e44f-ebeb-43ee-8179-9d98797a1d7a",
+      "name": "Record Check",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "f5963f4a-3980-4875-8734-c7f91a3d28da",
+              "leftValue": "={{ $json.ok}}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        192,
+        -16
+      ],
+      "id": "b57489ef-ac9b-44a8-a617-b6ffb20c8b62",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e17f7aa-2bb1-488a-bfd0-df32a3e545d4",
+              "name": "content",
+              "value": "=={{   \"🚨 **Uptime alert: demo.realworld.show**\\n\" +  \"Time: \" + $json.checkedAt + \"\\n\" +  \"Status: \" + $json.statusCode + \"\\n\" +  \"Response time: \" + $json.responseTimeMs + \" ms\\n\" +  \"Attempts: \" + $json.attempt + \" / \" + $json.maxAttempts + \"\\n\" +  ($json.error ? \"Error: \" + $json.error + \"\\n\" : \"\") +  \"URL: \" + $json.url}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        416,
+        -16
+      ],
+      "id": "90fd9f92-89d4-425d-a873-7e72e6f805d3",
+      "name": "Alert Path"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=={{ $json.content }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -16
+      ],
+      "id": "b25feef9-ea30-4c43-9162-fa581456ef5f",
+      "name": "Discord",
+      "webhookId": "f47f1a8d-7775-4e56-9c5b-6309671404f8",
+      "alwaysOutputData": true,
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "Z3bQxXoo8b7KvpJQ",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -480,
+        -16
+      ],
+      "id": "23bfb21d-c50c-486b-9a21-a682810287ce",
+      "name": "Every 5 minutes"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 11,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -480,
+        208
+      ],
+      "id": "9fddc380-8cf8-413e-a100-943eecf45e97",
+      "name": "Daily summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nconst checks = Array.isArray(store.checks) ? store.checks : [];\n\nconst now = Date.now();\nconst since = now - 24 * 60 * 60 * 1000;\n\nconst recent = checks.filter((c) => {\n  const t = new Date(c.checkedAt).getTime();\n  return !Number.isNaN(t) && t >= since;\n});\n\nconst total = recent.length;\nconst failures = recent.filter((c) => !c.ok);\nconst failCount = failures.length;\nconst successCount = total - failCount;\nconst uptimePct =\n  total === 0 ? 100 : Math.round((successCount / total) * 1000) / 10;\n\nlet avgMs = 0;\nif (total > 0) {\n  avgMs = Math.round(\n    recent.reduce((sum, c) => sum + (Number(c.responseTimeMs) || 0), 0) /\n      total\n  );\n}\n\nconst content = [\n  '📊 **Uptime summary (demo.realworld.show)**',\n  'Window: last 24 hours',\n  `Checks: ${total} (stored total: ${checks.length})`,\n  `Failures: ${failCount}`,\n  `Uptime: ${uptimePct}%`,\n  `Avg response: ${avgMs} ms`,\n].join('\\n');\n\nreturn [\n  {\n    json: {\n      content,\n      hasData: total > 0,\n      total,\n      totalInStore: checks.length,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        208
+      ],
+      "id": "3759a09a-fa82-4374-94f3-64d22613c03b",
+      "name": "Build daily summary"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "ca6b5dd2-2242-4192-a993-492c4e024a5a",
+              "leftValue": "={{ $json.hasData }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -32,
+        208
+      ],
+      "id": "0176b2f7-918e-47fb-99b9-380424bd02d7",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=={{ $json.content }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        192,
+        208
+      ],
+      "id": "0355e28e-f18c-4958-81c0-538231c6589a",
+      "name": "Discord1",
+      "webhookId": "f47f1a8d-7775-4e56-9c5b-6309671404f8",
+      "alwaysOutputData": true,
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "Z3bQxXoo8b7KvpJQ",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Every 5 Minute click** to edit me. [Guide](https://docs.n8n.io/workflows/components/sticky-notes/)",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -496,
+        -112
+      ],
+      "typeVersion": 1,
+      "id": "4edefc1b-7f4d-40f3-acc1-b468cef462fd",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Daily Uptime click** to edit me. [Guide](https://docs.n8n.io/workflows/components/sticky-notes/)",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        400,
+        224
+      ],
+      "typeVersion": 1,
+      "id": "60437854-2992-4bd3-bc2e-845c5fef6088",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check site health": {
+      "main": [
+        [
+          {
+            "node": "Record Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Check": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Alert Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Path": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Check site health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily summary": {
+      "main": [
+        [
+          {
+            "node": "Build daily summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build daily summary": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Discord1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7243306f-0284-4d49-9758-6675cfd47d0b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cc1b0013a5e4d6cdb1afa6e7ee1e271bdbd922e070cba60c415510524e5a6c48"
+  },
+  "nodeGroups": [],
+  "id": "fzjqib7OxedhfuL8",
+  "tags": []
+}

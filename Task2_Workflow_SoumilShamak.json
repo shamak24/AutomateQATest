@@ -1,0 +1,369 @@
+{
+  "name": "morning briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -384,
+        -16
+      ],
+      "id": "7f249ac5-2fa0-4404-adcc-6334dc55ee35",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "dee57d09-1312-4ae3-b54b-e4726b3b1ec6",
+              "leftValue": "={{ $('Fetch & Rank top 5').item.json.topStory.score }}",
+              "rightValue": 100,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        448,
+        -144
+      ],
+      "id": "549e9bca-e6df-451f-956f-eb5854d0e48a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rank = $('Fetch & Rank top 5').item.json;\nconst user = $input.first().json; // HN user object from Enrich\n\nconst lines = rank.topFive.map((s, i) =>\n  `${i + 1}. [${s.score}] ${s.title}\\n   ${s.url || 'https://news.ycombinator.com/item?id=' + s.id}`\n);\n\nconst top = rank.topStory;\nconst karma = user.karma ?? 'n/a';\nconst comments = top.descendants ?? (top.kids || []).length;\n\nconst content = [\n  '🔥 **HN Brief (hot top story)**',\n  `Fetched: ${rank.fetchedAt}`,\n  '',\n  `**#1:** ${top.title} (score ${top.score})`,\n  `By **${top.by}** · karma **${karma}** · ~**${comments}** comments`,\n  top.url || `https://news.ycombinator.com/item?id=${top.id}`,\n  '',\n  '**Top 5:**',\n  ...lines,\n].join('\\n');\n\nreturn [{ json: { content } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -320
+      ],
+      "id": "0a283ebc-b089-4a68-8cd0-6124caa0ae8f",
+      "name": "Build digest (hot)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rank = $('Fetch & Rank top 5').item.json;\nconst user = $input.first().json; // HN user object from Enrich\n\nconst lines = rank.topFive.map((s, i) =>\n  `${i + 1}. [${s.score}] ${s.title}\\n   ${s.url || 'https://news.ycombinator.com/item?id=' + s.id}`\n);\n\nconst top = rank.topStory;\nconst karma = user.karma ?? 'n/a';\nconst comments = top.descendants ?? (top.kids || []).length;\n\nconst content = [\n  '📰**HN Brief **',\n  `Fetched: ${rank.fetchedAt}`,\n  '',\n  `**#1:** ${top.title} (score ${top.score})`,\n  `By **${top.by}** · karma **${karma}** · ~**${comments}** comments`,\n  top.url || `https://news.ycombinator.com/item?id=${top.id}`,\n  '',\n  '**Top 5:**',\n  ...lines,\n].join('\\n');\n\nreturn [{ json: { content } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -48
+      ],
+      "id": "2598f033-9840-476e-8db0-9b5b6c9b4ea0",
+      "name": "Build digest (normal)"
+    },
+    {
+      "parameters": {
+        "url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -192,
+        -16
+      ],
+      "id": "916badab-094f-4ae1-9870-cf1a083e177a",
+      "name": "Get top story ID",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\n\nlet ids = [];\n\n// Many output items = one ID per item (common in n8n)\nif (allItems.length > 1) {\n  ids = allItems\n    .map((item) => item.json)\n    .map((j) => (typeof j === 'number' ? j : Number(j)))\n    .filter((n) => !Number.isNaN(n));\n} else {\n  let raw = allItems[0]?.json;\n\n  if (typeof raw === 'string') {\n    raw = JSON.parse(raw.trim());\n  }\n\n  if (Array.isArray(raw)) {\n    ids = raw.map(Number).filter((n) => !Number.isNaN(n));\n  } else if (raw && typeof raw === 'object') {\n    const vals = Object.values(raw);\n    if (vals.length && vals.every((v) => typeof v === 'number' || /^\\d+$/.test(String(v)))) {\n      ids = vals.map(Number);\n    }\n  }\n}\n\nif (!ids.length) {\n  throw new Error('Still no IDs. Item count=' + allItems.length);\n}\n\nconst stories = [];\n\nfor (const id of ids.slice(0, 30)) {\n  const item = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `https://hacker-news.firebaseio.com/v0/item/${id}.json`,\n    json: true,\n  });\n  if (item?.type === 'story' && item.title) {\n    stories.push(item);\n  }\n}\n\nstories.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));\nconst topFive = stories.slice(0, 5);\n\nreturn [\n  {\n    json: {\n      topFive,\n      topStory: topFive[0],\n      fetchedAt: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -192
+      ],
+      "id": "d674ff32-b618-4231-a5bc-800931dac78e",
+      "name": "Fetch & Rank top 5",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=={{ $json.content }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -160
+      ],
+      "id": "fcc9f6c1-81f6-45c0-a74c-e831d3f4aabe",
+      "name": "Discord",
+      "webhookId": "b10dac68-0c29-428a-ab9f-05a848ec6a6b",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "Z3bQxXoo8b7KvpJQ",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=={{ $json.content }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        352,
+        48
+      ],
+      "id": "5ec3afce-c02e-451b-94ee-095a1f211fe4",
+      "name": "Post Error",
+      "webhookId": "b10dac68-0c29-428a-ab9f-05a848ec6a6b",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "Z3bQxXoo8b7KvpJQ",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://hacker-news.firebaseio.com/v0/user/{{ $json.topStory.by }}.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        192,
+        -304
+      ],
+      "id": "7b8d5c1d-1f7a-470d-85cb-f264f0ec15b1",
+      "name": "Enrich Top Story",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1226e0c6-3e23-45ea-a35b-ac45f25a494c",
+              "name": "content",
+              "value": "=See below",
+              "type": "string"
+            },
+            {
+              "id": "1e859812-5508-4123-a30b-892aea366d3e",
+              "name": "==⚠️ **HN Morning Brief failed**\n\nStep: Get top story IDs\nTime: {{ $now.toISO() }}\n\nCould not load https://hacker-news.firebaseio.com/v0/topstories.json\nCheck Docker/network and retry on the next schedule run.",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        32,
+        112
+      ],
+      "id": "8d111803-a0f7-42c1-b7c5-864dc72a79a6",
+      "name": "HN API failed"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1226e0c6-3e23-45ea-a35b-ac45f25a494c",
+              "name": "content",
+              "value": "=See below",
+              "type": "string"
+            },
+            {
+              "id": "1e859812-5508-4123-a30b-892aea366d3e",
+              "name": "==⚠️ **HN Morning Brief failed**\n\nStep: Fetch and Rank top 5\nTime: {{ $now.toISO() }}\n\nCould not load https://hacker-news.firebaseio.com/v0/topstories.json\nCheck Docker/network and retry on the next schedule run.",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        192,
+        -144
+      ],
+      "id": "0f597883-24df-482b-b63e-5f4ed23a87b7",
+      "name": "Rank failed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get top story ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Build digest (hot)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build digest (normal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest (normal)": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest (hot)": {
+      "main": [
+        [
+          {
+            "node": "Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get top story ID": {
+      "main": [
+        [
+          {
+            "node": "Fetch & Rank top 5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HN API failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch & Rank top 5": {
+      "main": [
+        [
+          {
+            "node": "Enrich Top Story",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rank failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Top Story": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HN API failed": {
+      "main": [
+        [
+          {
+            "node": "Post Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank failed": {
+      "main": [
+        [
+          {
+            "node": "Post Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6cebaf30-413d-4deb-a9b7-48fe5b5f2725",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cc1b0013a5e4d6cdb1afa6e7ee1e271bdbd922e070cba60c415510524e5a6c48"
+  },
+  "nodeGroups": [],
+  "id": "7tf0Md5DtuYWx18C",
+  "tags": []
+}
